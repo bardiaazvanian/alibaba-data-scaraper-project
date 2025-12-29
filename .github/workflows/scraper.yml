@@ -1,14 +1,12 @@
-name: Alibaba Flight Scraper
+name: Alibaba Flight Tracker
 
 on:
   schedule:
-    # اجرا سر هر ساعت (دقیقه 0)
-    - cron: '0 * * * *'
-  # امکان اجرای دستی با دکمه برای تست
+    - cron: '0 * * * *' # هر ساعت
   workflow_dispatch:
 
 jobs:
-  scrape_and_run:
+  run-scraper:
     runs-on: ubuntu-latest
     
     steps:
@@ -20,14 +18,14 @@ jobs:
         with:
           python-version: '3.9'
           
-      - name: Install Dependencies
-        # نصب کتابخونه‌هایی که توی requirements.txt نوشتی
+      - name: Install Libraries
         run: pip install -r requirements.txt
         
-      - name: Create Cookie File
-        # ساخت فایل کوکی از روی Secret که قراره بسازی
-        run: echo '${{ secrets.ALIBABA_COOKIES }}' > cookies.json
+      - name: Create Secrets Files
+        # اینجا هم کوکی علی‌بابا رو میسازیم هم کلید گوگل رو
+        run: |
+          echo '${{ secrets.ALIBABA_COOKIES }}' > cookies.json
+          echo '${{ secrets.GOOGLE_CREDENTIALS }}' > google_credentials.json
 
-      - name: Run Python Script
-        # اجرای فایل اصلی پایتون
+      - name: Run Script
         run: python main.py
