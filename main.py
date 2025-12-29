@@ -12,36 +12,63 @@ from webdriver_manager.chrome import ChromeDriverManager
 import jdatetime
 
 def get_alibaba_price(target_url):
-    # --- تنظیمات مخصوص سرور (GitHub Actions) ---
+    print("🔧 Setting up Chrome options for GitHub Actions...")
     chrome_options = Options()
-    chrome_options.add_argument("--headless")  # برای سرور حتما باید روشن باشه
-    chrome_options.add_argument("--disable-gpu")
+    
+    # --- تنظیمات حیاتی برای جلوگیری از کرش روی سرور ---
+    chrome_options.add_argument("--headless=new")  # ورژن جدید و پایدار هدلس
+    chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-
-    # نصب و راه اندازی درایور
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--disable-infobars")
+    
+    # --- تکنیک‌های آنتی‌دتکشن (جلوگیری از تشخیص ربات) ---
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option('useAutomationExtension', False)
+    
+    # User-Agent جدید و واقعی
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
     try:
-        # 1. دامنه اصلی و کوکی (اگر فایلش موجود باشد)
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+        
+        # مخفی کردن متغیر navigator.webdriver (ترفند حرفه‌ای)
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    except Exception as e:
+        print(f"❌ Failed to initialize driver: {e}")
+        return None
+
+    try:
+        # 1. دامنه اصلی و کوکی
+        print("🌍 Going to base domain...")
         driver.get("https://www.alibaba.ir")
         
         if os.path.exists('cookies.json'):
-            print("🍪 Loading Cookies from secret...")
+            print("🍪 Loading Cookies...")
             try:
                 with open('cookies.json', 'r', encoding='utf-8') as f:
                     cookies = json.load(f)
+                
+                # تعداد کوکی‌های لود شده
+                count = 0
                 for cookie in cookies:
                     if 'alibaba' in cookie.get('domain', ''):
                         cookie_clean = {
                             'name': cookie['name'],
                             'value': cookie['value'],
                             'domain': '.alibaba.ir',
-                            'path': '/'
+                            'path': '/',
+                            # فیلدهای امنیتی رو برای اطمینان حذف میکنیم
                         }
-                        driver.add_cookie(cookie_clean)
+                        try:
+                            driver.add_cookie(cookie_clean)
+                            count += 1
+                        except:
+                            pass
+                print(f"✅ {count} Cookies injected.")
                 driver.refresh()
                 time.sleep(2)
             except Exception as e:
@@ -49,7 +76,7 @@ def get_alibaba_price(target_url):
         else:
             print("ℹ️ No cookies found. Running as Guest.")
 
-        # 2. استخراج تاریخ پرواز از لینک (برای لاگ)
+        # 2. استخراج تاریخ از لینک
         try:
             parsed = urllib.parse.urlparse(target_url)
             flight_date = urllib.parse.parse_qs(parsed.query).get('departing', ['Unknown'])[0]
@@ -60,21 +87,26 @@ def get_alibaba_price(target_url):
         print(f"✈️ Checking flight date: {flight_date}")
         driver.get(target_url)
 
-        wait = WebDriverWait(driver, 30)
-        # سلکتور دقیق قیمت
+        wait = WebDriverWait(driver, 40) # افزایش زمان انتظار
+        
+        # سلکتور قیمت
         selector = ".pdp-card_sidebar .text-secondary-400"
 
-        # منتظر میمانیم
+        print("⏳ Waiting for price element...")
         price_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
         
-        # گرفتن متن
-        raw_text = price_element.text
+        # اسکرول برای اطمینان
+        driver.execute_script("arguments[0].scrollIntoView();", price_element)
         
-        # تمیز کردن عدد
+        raw_text = price_element.text
+        print(f"🔎 Raw text found: {raw_text}")
+        
         digits = ''.join([c for c in raw_text if c.isdigit()])
         
         if not digits:
             print("❌ Element found but no digits inside.")
+            # برای دیباگ، سورس صفحه رو چاپ میکنیم (میتونی بعدا پاک کنی)
+            # print(driver.page_source[:500]) 
             return None
             
         final_price = int(digits)
@@ -85,19 +117,25 @@ def get_alibaba_price(target_url):
 
     except Exception as e:
         print(f"❌ Error occurred: {e}")
+        # اگر کرش کرد سعی میکنیم تایتل صفحه رو بخونیم ببینیم کجا هستیم
+        try:
+            print(f"Current Page Title: {driver.title}")
+        except:
+            pass
         return None
 
     finally:
-        driver.quit()
+        try:
+            driver.quit()
+        except:
+            pass
 
 if __name__ == "__main__":
-    # لینک پرواز (حتما تاریخ معتبر و آینده باشد)
-    # مثال: پرواز برای 5 بهمن 1403
+    # لینک پرواز - تاریخ را چک کن که برای آینده باشد
     url = "https://www.alibaba.ir/international/search/THRALL-DXBALL?adult=1&child=0&infant=0&departing=1403-11-05&flightClass=economy&airlines[0]=W5"
     
-    print("🚀 Starting Scraper on GitHub Actions...")
+    print("🚀 Starting Scraper (v2 Stable)...")
     
-    # گرفتن زمان شمسی اجرا
     now_shamsi = jdatetime.datetime.now().strftime("%Y/%m/%d - %H:%M:%S")
     
     data = get_alibaba_price(url)
@@ -111,4 +149,4 @@ if __name__ == "__main__":
         print("*"*40 + "\n")
     else:
         print("\n❌ Failed to extract price.\n")
-        exit(1) # این باعث میشه گیت هاب قرمز نشون بده
+        exit(1)
