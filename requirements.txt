@@ -3,4 +3,3 @@ webdriver-manager
 jdatetime
 pytz
 gspread
-oauth2client
