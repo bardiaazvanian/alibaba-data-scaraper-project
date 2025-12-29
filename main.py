@@ -2,8 +2,11 @@ import json
 import time
 import os
 import urllib.parse
-from datetime import datetime # این رو اضافه کردم
-import pytz # این رو اضافه کردم (برای تایم زون تهران)
+from datetime import datetime
+import pytz
+import jdatetime
+import gspread # کتابخانه شیت
+from oauth2client.service_account import ServiceAccountCredentials # کتابخانه احراز هویت
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -11,13 +14,43 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
-import jdatetime
+
+# --- تنظیمات گوگل شیت ---
+SHEET_NAME = "FlightPrices" # <--- اسم دقیق فایل گوگل شیتت رو اینجا بنویس
+CREDENTIALS_FILE = "google_credentials.json"
+
+def save_to_sheet(data):
+    """ذخیره دیتا در گوگل شیت"""
+    print("📊 Connecting to Google Sheets...")
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        
+        if not os.path.exists(CREDENTIALS_FILE):
+            print("❌ Google Credentials file not found!")
+            return
+
+        creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
+        client = gspread.authorize(creds)
+        
+        # باز کردن شیت
+        sheet = client.open(SHEET_NAME).sheet1 # شیت اول
+        
+        # --- تغییرات درخواستی شما اینجا اعمال شد ---
+        # فقط دو ستون: تاریخ چک کردن و قیمت
+        row = [
+            data['check_time'],  # ستون اول: زمان چک کردن (شمسی)
+            data['price']        # ستون دوم: مبلغ
+        ]
+        
+        sheet.append_row(row)
+        print("✅ Data saved to Google Sheet successfully!")
+        
+    except Exception as e:
+        print(f"❌ Error saving to Sheet: {e}")
 
 def get_alibaba_price(target_url):
-    print("🔧 Setting up Chrome options (Logged-in Mode)...")
+    print("🔧 Setting up Chrome options...")
     chrome_options = Options()
-    
-    # --- تنظیمات سرور ---
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--no-sandbox")
@@ -30,128 +63,96 @@ def get_alibaba_price(target_url):
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
-    
     chrome_options.add_argument("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
+    driver = None
     try:
         driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-    except Exception as e:
-        print(f"❌ Driver Init Failed: {e}")
-        return None
-
-    try:
-        # 1. دامنه اصلی و کوکی
-        print("🌍 Going to base domain to inject cookies...")
-        driver.get("https://www.alibaba.ir")
         
+        # 1. کوکی‌ها
+        print("🌍 Injecting cookies...")
+        driver.get("https://www.alibaba.ir")
         if os.path.exists('cookies.json'):
-            print("🍪 Loading Cookies...")
             try:
                 with open('cookies.json', 'r', encoding='utf-8') as f:
                     cookies = json.load(f)
-                
-                injected_count = 0
+                count = 0
                 for cookie in cookies:
                     if 'alibaba' in cookie.get('domain', ''):
-                        cookie_clean = {
-                            'name': cookie['name'],
-                            'value': cookie['value'],
-                            'domain': '.alibaba.ir',
-                            'path': '/',
-                        }
+                        cookie_clean = {'name': cookie['name'], 'value': cookie['value'], 'domain': '.alibaba.ir', 'path': '/'}
                         try:
                             driver.add_cookie(cookie_clean)
-                            injected_count += 1
-                        except:
-                            pass
-                
-                print(f"✅ {injected_count} Cookies injected.")
+                            count += 1
+                        except: pass
+                print(f"✅ {count} cookies injected.")
                 driver.refresh()
                 time.sleep(3)
-                
-            except Exception as e:
-                print(f"⚠️ Cookie Error: {e}")
-        else:
-            print("⚠️ CRITICAL: No cookies.json found!")
+            except: pass
 
-        # 2. استخراج تاریخ از لینک
+        # 2. تاریخ پرواز (فقط برای لاگ کردن استفاده میشه ولی در شیت ذخیره نمیشه)
         try:
             parsed = urllib.parse.urlparse(target_url)
             flight_date = urllib.parse.parse_qs(parsed.query).get('departing', ['Unknown'])[0]
         except:
             flight_date = "Unknown"
 
-        # 3. رفتن به لینک پرواز
+        # 3. گرفتن قیمت
         print(f"✈️ Navigating to flight: {flight_date}")
         driver.get(target_url)
-        print(f"📍 Page Title: {driver.title}")
-
+        
         wait = WebDriverWait(driver, 45)
+        # تلاش برای پیدا کردن قیمت
         selector = ".pdp-card_sidebar .text-secondary-400"
-
-        print("⏳ Waiting for price...")
+        
         try:
+            # چک کردن لود شدن کلی
             wait.until(EC.presence_of_element_located((By.CLASS_NAME, "available-flights")))
-        except:
-            print("⚠️ 'Available flights' container not found, checking for price directly...")
+        except: 
+            print("⚠️ Flights container not found, trying direct price...")
 
         price_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
-        
         driver.execute_script("arguments[0].scrollIntoView();", price_element)
         
         raw_text = price_element.text
-        print(f"🔎 Found text: {raw_text}")
-        
         digits = ''.join([c for c in raw_text if c.isdigit()])
         
-        if not digits:
-            print("❌ Price element found but empty.")
-            return None
-            
+        if not digits: return None
+        
         final_price = int(digits)
-        return {
-            "price": final_price,
-            "flight_date": flight_date
-        }
+        return {"price": final_price, "flight_date": flight_date}
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Scrape Error: {e}")
         return None
-
     finally:
-        try:
-            driver.quit()
-        except:
-            pass
+        if driver: driver.quit()
 
 if __name__ == "__main__":
-    # لینک پرواز
-    url = "https://www.alibaba.ir/international/search/THRALL-DXBALL?adult=1&child=0&infant=0&departing=1404-10-25&flightClass=economy&airlines[0]=W5&pdm=ODU1Nzc0NTQ2NjA2MjM5Mjk3NC8wZTcwMGRkZi0wODQwLTQ3MzgtYjNiYi04NDk3MjA2MWJlNmY="
+    url = "https://www.alibaba.ir/international/search/THRALL-DXBALL?adult=1&child=0&infant=0&departing=1404-10-25&flightClass=economy&airlines[0]=W5&pdm=ODU1Nzc0NTQ2NjA2MjM5Mjk3NC8wZTcwMGRkZi0wODQwLTQ3MzgtYjNiYi04NDk3MjA2MWJlNmY=
+"
     
-    print("🚀 Starting Logged-in Scraper...")
+    print("🚀 Starting Bot...")
     
-    # --- اصلاح زمان به وقت تهران ---
+    # ساعت تهران
     try:
-        # تنظیم منطقه زمانی تهران
         tehran_tz = pytz.timezone('Asia/Tehran')
-        # گرفتن زمان حال با تنظیمات تهران
         now_tehran = datetime.now(tehran_tz)
-        # تبدیل به شمسی
         now_shamsi = jdatetime.datetime.fromgregorian(datetime=now_tehran).strftime("%Y/%m/%d - %H:%M:%S")
-    except Exception as e:
-        # اگر کتابخانه pytz نبود، همون UTC رو بزنه که ارور نده
-        print(f"Timezone Error: {e}")
+    except:
         now_shamsi = jdatetime.datetime.now().strftime("%Y/%m/%d - %H:%M:%S")
-    
+
     data = get_alibaba_price(url)
     
     if data:
+        # اضافه کردن ساعت به پکیج دیتا
+        data['check_time'] = now_shamsi
+        
         print("\n" + "*"*40)
-        print(f"✅ SUCCESS")
-        print(f"⏰ Tehran Time: {now_shamsi}")
-        print(f"💰 Price      : {data['price']:,} Rials")
+        print(f"✅ Price Found: {data['price']:,}")
         print("*"*40 + "\n")
+        
+        # ذخیره در گوگل شیت
+        save_to_sheet(data)
     else:
-        print("\n❌ Failed.\n")
+        print("❌ Failed.")
         exit(1)
-
