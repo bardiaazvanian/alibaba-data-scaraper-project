@@ -1,0 +1,33 @@
+name: Alibaba Flight Scraper
+
+on:
+  schedule:
+    # اجرا سر هر ساعت (دقیقه 0)
+    - cron: '0 * * * *'
+  # امکان اجرای دستی با دکمه برای تست
+  workflow_dispatch:
+
+jobs:
+  scrape_and_run:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: Install Dependencies
+        # نصب کتابخونه‌هایی که توی requirements.txt نوشتی
+        run: pip install -r requirements.txt
+        
+      - name: Create Cookie File
+        # ساخت فایل کوکی از روی Secret که قراره بسازی
+        run: echo '${{ secrets.ALIBABA_COOKIES }}' > cookies.json
+
+      - name: Run Python Script
+        # اجرای فایل اصلی پایتون
+        run: python main.py
