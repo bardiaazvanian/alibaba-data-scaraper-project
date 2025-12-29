@@ -15,7 +15,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 # --- تنظیمات گوگل شیت ---
-SHEET_NAME = "FlightPrices" # <--- مطمئن شو اسم فایل گوگل شیت دقیقاً همین باشه
+SHEET_NAME = "Mahan Airlines W5061" # <--- مطمئن شو اسم فایل گوگل شیت دقیقاً همین باشه
 CREDENTIALS_FILE = "google_credentials.json"
 
 def save_to_sheet(data):
@@ -149,4 +149,5 @@ if __name__ == "__main__":
     else:
         print("❌ Failed.")
         exit(1)
+
 
