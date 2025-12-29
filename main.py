@@ -142,7 +142,7 @@ def get_alibaba_price(target_url):
 
 if __name__ == "__main__":
     # لینک پرواز
-    url = "https://www.alibaba.ir/international/search/THRALL-DXBALL?adult=1&child=0&infant=0&departing=1403-11-05&flightClass=economy&airlines[0]=W5"
+    url = "https://www.alibaba.ir/international/search/THRALL-DXBALL?adult=1&child=0&infant=0&departing=1404-10-25&flightClass=economy&airlines[0]=W5&pdm=ODU1Nzc0NTQ2NjA2MjM5Mjk3NC8wZTcwMGRkZi0wODQwLTQ3MzgtYjNiYi04NDk3MjA2MWJlNmY="
     
     print("🚀 Starting Logged-in Scraper...")
     
@@ -159,3 +159,4 @@ if __name__ == "__main__":
     else:
         print("\n❌ Failed.\n")
         exit(1)
+
