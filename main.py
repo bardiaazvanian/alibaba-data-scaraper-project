@@ -12,38 +12,35 @@ from webdriver_manager.chrome import ChromeDriverManager
 import jdatetime
 
 def get_alibaba_price(target_url):
-    print("🔧 Setting up Chrome options for GitHub Actions...")
+    print("🔧 Setting up Chrome options (Logged-in Mode)...")
     chrome_options = Options()
     
-    # --- تنظیمات حیاتی برای جلوگیری از کرش روی سرور ---
-    chrome_options.add_argument("--headless=new")  # ورژن جدید و پایدار هدلس
+    # --- تنظیمات حیاتی برای سرور گیت‌هاب ---
+    chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--disable-software-rasterizer")
     chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--disable-infobars")
     
-    # --- تکنیک‌های آنتی‌دتکشن (جلوگیری از تشخیص ربات) ---
+    # آنتی‌دتکشن
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
     
-    # User-Agent جدید و واقعی
+    # User-Agent جدید
     chrome_options.add_argument("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
     try:
         driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-        
-        # مخفی کردن متغیر navigator.webdriver (ترفند حرفه‌ای)
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     except Exception as e:
-        print(f"❌ Failed to initialize driver: {e}")
+        print(f"❌ Driver Init Failed: {e}")
         return None
 
     try:
-        # 1. دامنه اصلی و کوکی
-        print("🌍 Going to base domain...")
+        # 1. ورود به دامنه اصلی برای تزریق کوکی
+        print("🌍 Going to base domain to inject cookies...")
         driver.get("https://www.alibaba.ir")
         
         if os.path.exists('cookies.json'):
@@ -52,29 +49,34 @@ def get_alibaba_price(target_url):
                 with open('cookies.json', 'r', encoding='utf-8') as f:
                     cookies = json.load(f)
                 
-                # تعداد کوکی‌های لود شده
-                count = 0
+                injected_count = 0
                 for cookie in cookies:
+                    # فیلترینگ سخت‌گیرانه برای جلوگیری از ارور
                     if 'alibaba' in cookie.get('domain', ''):
                         cookie_clean = {
                             'name': cookie['name'],
                             'value': cookie['value'],
-                            'domain': '.alibaba.ir',
+                            'domain': '.alibaba.ir', # اجبار به دامین اصلی
                             'path': '/',
-                            # فیلدهای امنیتی رو برای اطمینان حذف میکنیم
+                            'secure': cookie.get('secure', False),
+                            # اکسپایری را حذف میکنیم تا سلنیوم گیر ندهد
                         }
                         try:
                             driver.add_cookie(cookie_clean)
-                            count += 1
+                            injected_count += 1
                         except:
                             pass
-                print(f"✅ {count} Cookies injected.")
+                
+                print(f"✅ {injected_count} Cookies injected.")
+                
+                # رفرش برای اعمال کوکی
                 driver.refresh()
-                time.sleep(2)
+                time.sleep(3)
+                
             except Exception as e:
-                print(f"⚠️ Cookie warning: {e}")
+                print(f"⚠️ Cookie Error: {e}")
         else:
-            print("ℹ️ No cookies found. Running as Guest.")
+            print("⚠️ CRITICAL: No cookies.json found! This might fail for international flights.")
 
         # 2. استخراج تاریخ از لینک
         try:
@@ -83,30 +85,37 @@ def get_alibaba_price(target_url):
         except:
             flight_date = "Unknown"
 
-        # 3. باز کردن صفحه پرواز
-        print(f"✈️ Checking flight date: {flight_date}")
+        # 3. رفتن به لینک پرواز
+        print(f"✈️ Navigating to flight: {flight_date}")
         driver.get(target_url)
 
-        wait = WebDriverWait(driver, 40) # افزایش زمان انتظار
+        # دیباگ: چاپ عنوان صفحه برای اینکه بفهمیم لاگین مانده یا پریده
+        print(f"📍 Page Title: {driver.title}")
+
+        wait = WebDriverWait(driver, 45) # زمان بیشتر برای اینترنشنال
         
         # سلکتور قیمت
         selector = ".pdp-card_sidebar .text-secondary-400"
 
-        print("⏳ Waiting for price element...")
+        print("⏳ Waiting for price...")
+        # ابتدا منتظر لود شدن کلی لیست پروازها میمانیم
+        try:
+            wait.until(EC.presence_of_element_located((By.CLASS_NAME, "available-flights")))
+        except:
+            print("⚠️ 'Available flights' container not found, checking for price directly...")
+
         price_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
         
-        # اسکرول برای اطمینان
+        # اسکرول
         driver.execute_script("arguments[0].scrollIntoView();", price_element)
         
         raw_text = price_element.text
-        print(f"🔎 Raw text found: {raw_text}")
+        print(f"🔎 Found text: {raw_text}")
         
         digits = ''.join([c for c in raw_text if c.isdigit()])
         
         if not digits:
-            print("❌ Element found but no digits inside.")
-            # برای دیباگ، سورس صفحه رو چاپ میکنیم (میتونی بعدا پاک کنی)
-            # print(driver.page_source[:500]) 
+            print("❌ Price element found but empty.")
             return None
             
         final_price = int(digits)
@@ -116,10 +125,11 @@ def get_alibaba_price(target_url):
         }
 
     except Exception as e:
-        print(f"❌ Error occurred: {e}")
-        # اگر کرش کرد سعی میکنیم تایتل صفحه رو بخونیم ببینیم کجا هستیم
+        print(f"❌ Error: {e}")
         try:
-            print(f"Current Page Title: {driver.title}")
+            print(f"Stuck URL: {driver.current_url}")
+            # اگر خواستی سورس صفحه رو ببینی خط زیر رو از کامنت در بیار
+            # print(driver.page_source[:1000])
         except:
             pass
         return None
@@ -131,10 +141,10 @@ def get_alibaba_price(target_url):
             pass
 
 if __name__ == "__main__":
-    # لینک پرواز - تاریخ را چک کن که برای آینده باشد
+    # لینک پرواز
     url = "https://www.alibaba.ir/international/search/THRALL-DXBALL?adult=1&child=0&infant=0&departing=1403-11-05&flightClass=economy&airlines[0]=W5"
     
-    print("🚀 Starting Scraper (v2 Stable)...")
+    print("🚀 Starting Logged-in Scraper...")
     
     now_shamsi = jdatetime.datetime.now().strftime("%Y/%m/%d - %H:%M:%S")
     
@@ -143,10 +153,9 @@ if __name__ == "__main__":
     if data:
         print("\n" + "*"*40)
         print(f"✅ SUCCESS")
-        print(f"⏰ Run Time   : {now_shamsi}")
-        print(f"📅 Flight Date: {data['flight_date']}")
-        print(f"💰 Price      : {data['price']:,} Rials")
+        print(f"⏰ Time: {now_shamsi}")
+        print(f"💰 Price: {data['price']:,} Rials")
         print("*"*40 + "\n")
     else:
-        print("\n❌ Failed to extract price.\n")
+        print("\n❌ Failed.\n")
         exit(1)
