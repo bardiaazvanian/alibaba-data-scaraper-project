@@ -6,7 +6,6 @@ from datetime import datetime
 import pytz
 import jdatetime
 import gspread # کتابخانه شیت
-from oauth2client.service_account import ServiceAccountCredentials # کتابخانه احراز هویت
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -16,30 +15,27 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 # --- تنظیمات گوگل شیت ---
-SHEET_NAME = "FlightPrices" # <--- اسم دقیق فایل گوگل شیتت رو اینجا بنویس
+SHEET_NAME = "FlightPrices" # <--- مطمئن شو اسم فایل گوگل شیت دقیقاً همین باشه
 CREDENTIALS_FILE = "google_credentials.json"
 
 def save_to_sheet(data):
-    """ذخیره دیتا در گوگل شیت"""
+    """ذخیره دیتا در گوگل شیت با روش جدید"""
     print("📊 Connecting to Google Sheets...")
     try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        
         if not os.path.exists(CREDENTIALS_FILE):
             print("❌ Google Credentials file not found!")
             return
 
-        creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
-        client = gspread.authorize(creds)
+        # --- روش جدید اتصال (بدون نیاز به oauth2client) ---
+        # خود gspread الان هوشمند شده و فایل جیسون رو میفهمه
+        client = gspread.service_account(filename=CREDENTIALS_FILE)
         
         # باز کردن شیت
-        sheet = client.open(SHEET_NAME).sheet1 # شیت اول
+        sheet = client.open(SHEET_NAME).sheet1 
         
-        # --- تغییرات درخواستی شما اینجا اعمال شد ---
-        # فقط دو ستون: تاریخ چک کردن و قیمت
         row = [
-            data['check_time'],  # ستون اول: زمان چک کردن (شمسی)
-            data['price']        # ستون دوم: مبلغ
+            data['check_time'],
+            data['price']
         ]
         
         sheet.append_row(row)
@@ -47,6 +43,7 @@ def save_to_sheet(data):
         
     except Exception as e:
         print(f"❌ Error saving to Sheet: {e}")
+        # اگر ارور داد، پرینت کن ببینیم چیه (معمولا اگه اسم فایل غلط باشه ارور میده)
 
 def get_alibaba_price(target_url):
     print("🔧 Setting up Chrome options...")
@@ -89,7 +86,7 @@ def get_alibaba_price(target_url):
                 time.sleep(3)
             except: pass
 
-        # 2. تاریخ پرواز (فقط برای لاگ کردن استفاده میشه ولی در شیت ذخیره نمیشه)
+        # 2. تاریخ پرواز
         try:
             parsed = urllib.parse.urlparse(target_url)
             flight_date = urllib.parse.parse_qs(parsed.query).get('departing', ['Unknown'])[0]
@@ -128,11 +125,10 @@ def get_alibaba_price(target_url):
         if driver: driver.quit()
 
 if __name__ == "__main__":
-    url = "https://www.alibaba.ir/international/search/THRALL-DXBALL?adult=1&child=0&infant=0&departing=1404-10-25&flightClass=economy&airlines[0]=W5&pdm=ODU1Nzc0NTQ2NjA2MjM5Mjk3NC8wZTcwMGRkZi0wODQwLTQ3MzgtYjNiYi04NDk3MjA2MWJlNmY="
+    url = "https://www.alibaba.ir/international/search/THRALL-DXBALL?adult=1&child=0&infant=0&departing=1404-10-25&flightClass=economy&airlines[0]=W5"
     
     print("🚀 Starting Bot...")
     
-    # ساعت تهران
     try:
         tehran_tz = pytz.timezone('Asia/Tehran')
         now_tehran = datetime.now(tehran_tz)
@@ -143,16 +139,13 @@ if __name__ == "__main__":
     data = get_alibaba_price(url)
     
     if data:
-        # اضافه کردن ساعت به پکیج دیتا
         data['check_time'] = now_shamsi
         
         print("\n" + "*"*40)
         print(f"✅ Price Found: {data['price']:,}")
         print("*"*40 + "\n")
         
-        # ذخیره در گوگل شیت
         save_to_sheet(data)
     else:
         print("❌ Failed.")
         exit(1)
-
