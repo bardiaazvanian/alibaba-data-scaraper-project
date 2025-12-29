@@ -2,6 +2,8 @@ import json
 import time
 import os
 import urllib.parse
+from datetime import datetime # این رو اضافه کردم
+import pytz # این رو اضافه کردم (برای تایم زون تهران)
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -15,7 +17,7 @@ def get_alibaba_price(target_url):
     print("🔧 Setting up Chrome options (Logged-in Mode)...")
     chrome_options = Options()
     
-    # --- تنظیمات حیاتی برای سرور گیت‌هاب ---
+    # --- تنظیمات سرور ---
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--no-sandbox")
@@ -29,7 +31,6 @@ def get_alibaba_price(target_url):
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
     
-    # User-Agent جدید
     chrome_options.add_argument("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
     try:
@@ -39,7 +40,7 @@ def get_alibaba_price(target_url):
         return None
 
     try:
-        # 1. ورود به دامنه اصلی برای تزریق کوکی
+        # 1. دامنه اصلی و کوکی
         print("🌍 Going to base domain to inject cookies...")
         driver.get("https://www.alibaba.ir")
         
@@ -51,15 +52,12 @@ def get_alibaba_price(target_url):
                 
                 injected_count = 0
                 for cookie in cookies:
-                    # فیلترینگ سخت‌گیرانه برای جلوگیری از ارور
                     if 'alibaba' in cookie.get('domain', ''):
                         cookie_clean = {
                             'name': cookie['name'],
                             'value': cookie['value'],
-                            'domain': '.alibaba.ir', # اجبار به دامین اصلی
+                            'domain': '.alibaba.ir',
                             'path': '/',
-                            'secure': cookie.get('secure', False),
-                            # اکسپایری را حذف میکنیم تا سلنیوم گیر ندهد
                         }
                         try:
                             driver.add_cookie(cookie_clean)
@@ -68,15 +66,13 @@ def get_alibaba_price(target_url):
                             pass
                 
                 print(f"✅ {injected_count} Cookies injected.")
-                
-                # رفرش برای اعمال کوکی
                 driver.refresh()
                 time.sleep(3)
                 
             except Exception as e:
                 print(f"⚠️ Cookie Error: {e}")
         else:
-            print("⚠️ CRITICAL: No cookies.json found! This might fail for international flights.")
+            print("⚠️ CRITICAL: No cookies.json found!")
 
         # 2. استخراج تاریخ از لینک
         try:
@@ -88,17 +84,12 @@ def get_alibaba_price(target_url):
         # 3. رفتن به لینک پرواز
         print(f"✈️ Navigating to flight: {flight_date}")
         driver.get(target_url)
-
-        # دیباگ: چاپ عنوان صفحه برای اینکه بفهمیم لاگین مانده یا پریده
         print(f"📍 Page Title: {driver.title}")
 
-        wait = WebDriverWait(driver, 45) # زمان بیشتر برای اینترنشنال
-        
-        # سلکتور قیمت
+        wait = WebDriverWait(driver, 45)
         selector = ".pdp-card_sidebar .text-secondary-400"
 
         print("⏳ Waiting for price...")
-        # ابتدا منتظر لود شدن کلی لیست پروازها میمانیم
         try:
             wait.until(EC.presence_of_element_located((By.CLASS_NAME, "available-flights")))
         except:
@@ -106,7 +97,6 @@ def get_alibaba_price(target_url):
 
         price_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
         
-        # اسکرول
         driver.execute_script("arguments[0].scrollIntoView();", price_element)
         
         raw_text = price_element.text
@@ -126,12 +116,6 @@ def get_alibaba_price(target_url):
 
     except Exception as e:
         print(f"❌ Error: {e}")
-        try:
-            print(f"Stuck URL: {driver.current_url}")
-            # اگر خواستی سورس صفحه رو ببینی خط زیر رو از کامنت در بیار
-            # print(driver.page_source[:1000])
-        except:
-            pass
         return None
 
     finally:
@@ -142,21 +126,31 @@ def get_alibaba_price(target_url):
 
 if __name__ == "__main__":
     # لینک پرواز
-    url = "https://www.alibaba.ir/international/search/THRALL-DXBALL?adult=1&child=0&infant=0&departing=1404-10-25&flightClass=economy&airlines[0]=W5&pdm=ODU1Nzc0NTQ2NjA2MjM5Mjk3NC8wZTcwMGRkZi0wODQwLTQ3MzgtYjNiYi04NDk3MjA2MWJlNmY="
+    url = "https://www.alibaba.ir/international/search/THRALL-DXBALL?adult=1&child=0&infant=0&departing=1404-10-25&flightClass=economy&airlines[0]=W5"
     
     print("🚀 Starting Logged-in Scraper...")
     
-    now_shamsi = jdatetime.datetime.now().strftime("%Y/%m/%d - %H:%M:%S")
+    # --- اصلاح زمان به وقت تهران ---
+    try:
+        # تنظیم منطقه زمانی تهران
+        tehran_tz = pytz.timezone('Asia/Tehran')
+        # گرفتن زمان حال با تنظیمات تهران
+        now_tehran = datetime.now(tehran_tz)
+        # تبدیل به شمسی
+        now_shamsi = jdatetime.datetime.fromgregorian(datetime=now_tehran).strftime("%Y/%m/%d - %H:%M:%S")
+    except Exception as e:
+        # اگر کتابخانه pytz نبود، همون UTC رو بزنه که ارور نده
+        print(f"Timezone Error: {e}")
+        now_shamsi = jdatetime.datetime.now().strftime("%Y/%m/%d - %H:%M:%S")
     
     data = get_alibaba_price(url)
     
     if data:
         print("\n" + "*"*40)
         print(f"✅ SUCCESS")
-        print(f"⏰ Time: {now_shamsi}")
-        print(f"💰 Price: {data['price']:,} Rials")
+        print(f"⏰ Tehran Time: {now_shamsi}")
+        print(f"💰 Price      : {data['price']:,} Rials")
         print("*"*40 + "\n")
     else:
         print("\n❌ Failed.\n")
         exit(1)
-
