@@ -21,7 +21,7 @@ CREDENTIALS_FILE = "google_credentials.json"
 # --- تنظیمات زمانی (بخش جدید) ---
 # فرمت باید دقیقاً اینطوری باشه: "ساعت:دقیقه - روز/ماه/سال"
 # مثال: "1404/10/25 - 14:30" (یعنی ساعت ۲ و نیم ظهر روز ۲۵ دی)
-TARGET_FLIGHT_DEADLINE = "1404/10/25 - 19:00" 
+TARGET_FLIGHT_DEADLINE = "1404/10/25 - 06:50" 
 
 # لینک علی بابا
 ALIBABA_URL = "https://www.alibaba.ir/international/search/THRALL-DXBALL?adult=1&child=0&infant=0&departing=1404-10-25&flightClass=economy&airlines[0]=W5&pdm=ODU1Nzc0NTQ2NjA2MjM5Mjk3NC8wZTcwMGRkZi0wODQwLTQ3MzgtYjNiYi04NDk3MjA2MWJlNmY="
@@ -164,3 +164,4 @@ if __name__ == "__main__":
         
         # 4. صبر کردن به مدت یک ساعت (۳۶۰۰ ثانیه)
         time.sleep(3600)
+
