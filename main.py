@@ -3,7 +3,7 @@ import time
 import os
 import urllib.parse
 from datetime import datetime
-import pytz
+import pytz # این برای تنظیم منطقه زمانی لازمه
 import jdatetime
 import gspread
 from selenium import webdriver
@@ -25,12 +25,30 @@ TARGET_FLIGHT_DEADLINE = "1404/10/25 - 19:00"
 # لینک علی بابا
 ALIBABA_URL = "https://www.alibaba.ir/international/search/THRALL-DXBALL?adult=1&child=0&infant=0&departing=1404-10-25&flightClass=economy&airlines[0]=W5&pdm=ODU1Nzc0NTQ2NjA2MjM5Mjk3NC8wZTcwMGRkZi0wODQwLTQ3MzgtYjNiYi04NDk3MjA2MWJlNmY="
 
+def get_tehran_time():
+    """زمان فعلی رو به وقت تهران و به صورت آبجکت شمسی برمیگردونه"""
+    try:
+        # گرفتن زمان دقیق تهران (مهم نیست سرور کجاست)
+        tehran_tz = pytz.timezone('Asia/Tehran')
+        now_tehran = datetime.now(tehran_tz)
+        
+        # تبدیل به شمسی
+        now_shamsi = jdatetime.datetime.fromgregorian(datetime=now_tehran)
+        return now_shamsi
+    except Exception as e:
+        print(f"⚠️ Timezone Error: {e}")
+        return jdatetime.datetime.now() # فال‌بک به ساعت سیستم
+
 def check_if_expired(deadline_str):
     try:
         deadline = jdatetime.datetime.strptime(deadline_str, "%Y/%m/%d - %H:%M")
-        now = jdatetime.datetime.now()
-        if now > deadline:
-            print(f"⛔ EXPIRED: Current time ({now}) is past deadline.")
+        
+        # استفاده از ساعت تهران برای مقایسه
+        # نکته: برای مقایسه دقیق، اطلاعات منطقه زمانی رو حذف میکنیم (naive) تا با ددلاین که اونم naive هست سازگار باشه
+        now_tehran = get_tehran_time().replace(tzinfo=None)
+        
+        if now_tehran > deadline:
+            print(f"⛔ EXPIRED: Tehran time ({now_tehran}) is past deadline.")
             return True
         return False
     except Exception as e:
@@ -51,10 +69,7 @@ def save_to_sheet(data):
 def get_alibaba_price(target_url):
     print("🔧 Setting up Chrome (Fast Mode)...")
     chrome_options = Options()
-    
-    # --- تغییر مهم 1: حالت Eager برای سرعت بالا ---
     chrome_options.page_load_strategy = 'eager' 
-    
     chrome_options.add_argument("--headless=new") 
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--no-sandbox")
@@ -68,11 +83,9 @@ def get_alibaba_price(target_url):
     driver = None
     try:
         driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-        
-        # --- تغییر مهم 2: تایم‌اوت کلی ---
-        driver.set_page_load_timeout(60) # بیشتر از 60 ثانیه گیر نکنه
+        driver.set_page_load_timeout(60)
 
-        # 1. کوکی‌ها (سریع)
+        # 1. کوکی‌ها
         try:
             driver.get("https://www.alibaba.ir")
             if os.path.exists('cookies.json'):
@@ -83,21 +96,17 @@ def get_alibaba_price(target_url):
                         try: driver.add_cookie({'name': cookie['name'], 'value': cookie['value'], 'domain': '.alibaba.ir', 'path': '/'})
                         except: pass
                 driver.refresh()
-        except: pass # اگه کوکی ارور داد مهم نیست، ادامه بده
+        except: pass
 
         # 2. گرفتن قیمت
         print(f"✈️ Navigating to Flight Page...")
         driver.get(target_url)
         
-        # --- تغییر مهم 3: ویت کمتر ---
-        wait = WebDriverWait(driver, 20) # 45 ثانیه خیلی زیاده، کردمش 20
+        wait = WebDriverWait(driver, 20)
         selector = ".pdp-card_sidebar .text-secondary-400"
         
         try:
-            # مستقیم میریم سراغ قیمت، منتظر لود شدن لیست پروازها نمیمونیم
             price_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
-            
-            # اسکرول سریع
             driver.execute_script("arguments[0].scrollIntoView();", price_element)
             
             raw_text = price_element.text
@@ -126,16 +135,14 @@ if __name__ == "__main__":
             print("🛑 Deadline passed. Exiting.")
             break 
             
-        try:
-            now_shamsi = jdatetime.datetime.now().strftime("%Y/%m/%d - %H:%M:%S")
-        except:
-            now_shamsi = "Unknown"
+        # محاسبه دقیق زمان شمسی به وقت تهران برای ثبت در شیت
+        now_shamsi_str = get_tehran_time().strftime("%Y/%m/%d - %H:%M:%S")
 
         data = get_alibaba_price(ALIBABA_URL)
         
         if data:
-            data['check_time'] = now_shamsi
-            print(f"✅ Price Found: {data['price']:,}")
+            data['check_time'] = now_shamsi_str
+            print(f"✅ Price Found: {data['price']:,} (Time: {now_shamsi_str})")
             save_to_sheet(data)
         else:
             print("❌ No price found.")
