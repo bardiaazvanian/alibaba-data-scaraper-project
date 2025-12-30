@@ -13,157 +13,132 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.common.exceptions import TimeoutException
 
-
-# ===================== CONFIG =====================
-
+# --- تنظیمات گوگل شیت ---
 SHEET_NAME = "Mahan Airlines W5061"
 CREDENTIALS_FILE = "google_credentials.json"
 
-CHECK_INTERVAL_SECONDS = 3600  # هر ۱ ساعت
+# --- تنظیمات زمانی ---
+TARGET_FLIGHT_DEADLINE = "1404/10/25 - 19:00" 
 
-# ⏰ تاریخ و ساعت پرواز (شمسی)
-FLIGHT_DATETIME_SHAMSI = "1404-10-25 18:30"
+# لینک علی بابا
+ALIBABA_URL = "https://www.alibaba.ir/international/search/THRALL-DXBALL?adult=1&child=0&infant=0&departing=1404-10-25&flightClass=economy&airlines[0]=W5&pdm=ODU1Nzc0NTQ2NjA2MjM5Mjk3NC8wZTcwMGRkZi0wODQwLTQ3MzgtYjNiYi04NDk3MjA2MWJlNmY="
 
-URL = "https://www.alibaba.ir/international/search/THRALL-DXBALL?adult=1&child=0&infant=0&departing=1404-10-25&flightClass=economy&airlines[0]=W5&pdm=ODU1Nzc0NTQ2NjA2MjM5Mjk3NC8wZTcwMGRkZi0wODQwLTQ3MzgtYjNiYi04NDk3MjA2MWJlNmY="
-
-
-# ===================== UTILS =====================
-
-def shamsi_to_gregorian(shamsi_str):
-    jdt = jdatetime.datetime.strptime(shamsi_str, "%Y-%m-%d %H:%M")
-    return jdt.togregorian()
-
-
-def get_now_shamsi(tehran_time):
-    return jdatetime.datetime.fromgregorian(
-        datetime=tehran_time
-    ).strftime("%Y/%m/%d - %H:%M:%S")
-
-
-# ===================== GOOGLE SHEET =====================
+def check_if_expired(deadline_str):
+    try:
+        deadline = jdatetime.datetime.strptime(deadline_str, "%Y/%m/%d - %H:%M")
+        now = jdatetime.datetime.now()
+        if now > deadline:
+            print(f"⛔ EXPIRED: Current time ({now}) is past deadline.")
+            return True
+        return False
+    except Exception as e:
+        print(f"⚠️ Date Check Error: {e}")
+        return False
 
 def save_to_sheet(data):
+    print("📊 Saving to Google Sheets...")
     try:
+        if not os.path.exists(CREDENTIALS_FILE): return
         client = gspread.service_account(filename=CREDENTIALS_FILE)
-        sheet = client.open(SHEET_NAME).sheet1
-
-        row = [
-            data["check_time"],
-            data["price"]
-        ]
-
-        sheet.append_row(row)
-        print("✅ Saved to Google Sheet")
-
+        sheet = client.open(SHEET_NAME).sheet1 
+        sheet.append_row([data['check_time'], data['price']])
+        print("✅ Saved!")
     except Exception as e:
         print(f"❌ Sheet Error: {e}")
 
-
-# ===================== SCRAPER =====================
-
 def get_alibaba_price(target_url):
+    print("🔧 Setting up Chrome (Fast Mode)...")
     chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
+    
+    # --- تغییر مهم 1: حالت Eager برای سرعت بالا ---
+    chrome_options.page_load_strategy = 'eager' 
+    
+    chrome_options.add_argument("--headless=new") 
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option("useAutomationExtension", False)
+    chrome_options.add_experimental_option('useAutomationExtension', False)
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
 
     driver = None
-
     try:
-        driver = webdriver.Chrome(
-            service=Service(ChromeDriverManager().install()),
-            options=chrome_options
-        )
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+        
+        # --- تغییر مهم 2: تایم‌اوت کلی ---
+        driver.set_page_load_timeout(60) # بیشتر از 60 ثانیه گیر نکنه
 
-        driver.get("https://www.alibaba.ir")
+        # 1. کوکی‌ها (سریع)
+        try:
+            driver.get("https://www.alibaba.ir")
+            if os.path.exists('cookies.json'):
+                with open('cookies.json', 'r', encoding='utf-8') as f:
+                    cookies = json.load(f)
+                for cookie in cookies:
+                    if 'alibaba' in cookie.get('domain', ''):
+                        try: driver.add_cookie({'name': cookie['name'], 'value': cookie['value'], 'domain': '.alibaba.ir', 'path': '/'})
+                        except: pass
+                driver.refresh()
+        except: pass # اگه کوکی ارور داد مهم نیست، ادامه بده
 
-        if os.path.exists("cookies.json"):
-            with open("cookies.json", "r", encoding="utf-8") as f:
-                cookies = json.load(f)
-
-            for cookie in cookies:
-                if "alibaba" in cookie.get("domain", ""):
-                    try:
-                        driver.add_cookie({
-                            "name": cookie["name"],
-                            "value": cookie["value"],
-                            "domain": ".alibaba.ir",
-                            "path": "/"
-                        })
-                    except:
-                        pass
-
-            driver.refresh()
-            time.sleep(3)
-
+        # 2. گرفتن قیمت
+        print(f"✈️ Navigating to Flight Page...")
         driver.get(target_url)
-
-        wait = WebDriverWait(driver, 45)
+        
+        # --- تغییر مهم 3: ویت کمتر ---
+        wait = WebDriverWait(driver, 20) # 45 ثانیه خیلی زیاده، کردمش 20
         selector = ".pdp-card_sidebar .text-secondary-400"
-
-        price_element = wait.until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-        )
-
-        raw_text = price_element.text
-        digits = "".join(c for c in raw_text if c.isdigit())
-
-        if not digits:
+        
+        try:
+            # مستقیم میریم سراغ قیمت، منتظر لود شدن لیست پروازها نمیمونیم
+            price_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+            
+            # اسکرول سریع
+            driver.execute_script("arguments[0].scrollIntoView();", price_element)
+            
+            raw_text = price_element.text
+            digits = ''.join([c for c in raw_text if c.isdigit()])
+            
+            if digits:
+                return {"price": int(digits)}
+            
+        except TimeoutException:
+            print("⚠️ Timeout: Price element not found within 20s.")
             return None
-
-        return int(digits)
 
     except Exception as e:
         print(f"❌ Scrape Error: {e}")
         return None
-
     finally:
-        if driver:
-            driver.quit()
-
-
-# ===================== MAIN LOOP =====================
+        if driver: driver.quit()
 
 if __name__ == "__main__":
-
-    tehran_tz = pytz.timezone("Asia/Tehran")
-    flight_time = shamsi_to_gregorian(FLIGHT_DATETIME_SHAMSI)
-    flight_time = tehran_tz.localize(flight_time)
-
-    print("🚀 Flight Price Monitor Started")
-    print(f"✈️ Flight Time: {FLIGHT_DATETIME_SHAMSI}")
-
+    print("🚀 Starting Bot Loop...")
+    
     while True:
-        now_tehran = datetime.now(tehran_tz)
+        print("\n" + "="*40)
+        
+        if check_if_expired(TARGET_FLIGHT_DEADLINE):
+            print("🛑 Deadline passed. Exiting.")
+            break 
+            
+        try:
+            now_shamsi = jdatetime.datetime.now().strftime("%Y/%m/%d - %H:%M:%S")
+        except:
+            now_shamsi = "Unknown"
 
-        # ⛔ توقف کامل بعد از ساعت پرواز
-        if now_tehran >= flight_time:
-            print("⛔ Flight time passed. Bot stopped.")
-            break
-
-        now_shamsi = get_now_shamsi(now_tehran)
-        print(f"\n⏳ Checking price at {now_shamsi}")
-
-        price = get_alibaba_price(URL)
-
-        if price:
-            print(f"✅ Price: {price:,}")
-
-            data = {
-                "check_time": now_shamsi,
-                "price": price
-            }
-
+        data = get_alibaba_price(ALIBABA_URL)
+        
+        if data:
+            data['check_time'] = now_shamsi
+            print(f"✅ Price Found: {data['price']:,}")
             save_to_sheet(data)
-
         else:
-            print("❌ Price not found")
-
-        print("😴 Sleeping...\n")
-        time.sleep(CHECK_INTERVAL_SECONDS)
+            print("❌ No price found.")
+        
+        print("💤 Sleeping for 1 hour...")
+        time.sleep(3600)
