@@ -2,8 +2,8 @@ import json
 import time
 import os
 import urllib.parse
-from datetime import datetime
-import pytz # این برای تنظیم منطقه زمانی لازمه
+from datetime import datetime, timedelta
+import pytz
 import jdatetime
 import gspread
 from selenium import webdriver
@@ -15,59 +15,64 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import TimeoutException
 
-# --- تنظیمات گوگل شیت ---
+# --- تنظیمات ---
 SHEET_NAME = "Mahan Airlines W5061"
 CREDENTIALS_FILE = "google_credentials.json"
-
-# --- تنظیمات زمانی ---
 TARGET_FLIGHT_DEADLINE = "1404/10/25 - 19:00" 
-
-# لینک علی بابا
 ALIBABA_URL = "https://www.alibaba.ir/international/search/THRALL-DXBALL?adult=1&child=0&infant=0&departing=1404-10-25&flightClass=economy&airlines[0]=W5&pdm=ODU1Nzc0NTQ2NjA2MjM5Mjk3NC8wZTcwMGRkZi0wODQwLTQ3MzgtYjNiYi04NDk3MjA2MWJlNmY="
 
 def get_tehran_time():
-    """زمان فعلی رو به وقت تهران و به صورت آبجکت شمسی برمیگردونه"""
+    """زمان دقیق تهران به فرمت آبجکت جدیتی‌تایم"""
     try:
-        # گرفتن زمان دقیق تهران (مهم نیست سرور کجاست)
         tehran_tz = pytz.timezone('Asia/Tehran')
         now_tehran = datetime.now(tehran_tz)
+        return jdatetime.datetime.fromgregorian(datetime=now_tehran)
+    except:
+        return jdatetime.datetime.now()
+
+def get_last_run_time_from_sheet():
+    """آخرین زمان اجرا رو از شیت میخونه تا تکراری نزنیم"""
+    try:
+        if not os.path.exists(CREDENTIALS_FILE): return None
+        client = gspread.service_account(filename=CREDENTIALS_FILE)
+        sheet = client.open(SHEET_NAME).sheet1 
         
-        # تبدیل به شمسی
-        now_shamsi = jdatetime.datetime.fromgregorian(datetime=now_tehran)
-        return now_shamsi
+        all_values = sheet.get_all_values()
+        if len(all_values) < 2: return None # شیت خالیه
+        
+        last_row = all_values[-1]
+        last_time_str = last_row[0] # ستون اول زمانه
+        
+        # تبدیل متن شیت به زمان قابل فهم
+        # فرمت توی شیت: 1404/10/09 - 21:46:32
+        last_run_time = jdatetime.datetime.strptime(last_time_str, "%Y/%m/%d - %H:%M:%S")
+        return last_run_time
     except Exception as e:
-        print(f"⚠️ Timezone Error: {e}")
-        return jdatetime.datetime.now() # فال‌بک به ساعت سیستم
+        print(f"⚠️ Could not read last run time from sheet: {e}")
+        return None
 
 def check_if_expired(deadline_str):
     try:
         deadline = jdatetime.datetime.strptime(deadline_str, "%Y/%m/%d - %H:%M")
-        
-        # استفاده از ساعت تهران برای مقایسه
-        # نکته: برای مقایسه دقیق، اطلاعات منطقه زمانی رو حذف میکنیم (naive) تا با ددلاین که اونم naive هست سازگار باشه
         now_tehran = get_tehran_time().replace(tzinfo=None)
-        
         if now_tehran > deadline:
-            print(f"⛔ EXPIRED: Tehran time ({now_tehran}) is past deadline.")
+            print(f"⛔ EXPIRED: {now_tehran} > {deadline}")
             return True
         return False
-    except Exception as e:
-        print(f"⚠️ Date Check Error: {e}")
-        return False
+    except: return False
 
 def save_to_sheet(data):
-    print("📊 Saving to Google Sheets...")
     try:
         if not os.path.exists(CREDENTIALS_FILE): return
         client = gspread.service_account(filename=CREDENTIALS_FILE)
         sheet = client.open(SHEET_NAME).sheet1 
         sheet.append_row([data['check_time'], data['price']])
-        print("✅ Saved!")
+        print("✅ Data saved to Google Sheet.")
     except Exception as e:
-        print(f"❌ Sheet Error: {e}")
+        print(f"❌ Save Error: {e}")
 
 def get_alibaba_price(target_url):
-    print("🔧 Setting up Chrome (Fast Mode)...")
+    print("🔧 Scraper Started...")
     chrome_options = Options()
     chrome_options.page_load_strategy = 'eager' 
     chrome_options.add_argument("--headless=new") 
@@ -78,74 +83,74 @@ def get_alibaba_price(target_url):
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-
+    
     driver = None
     try:
         driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
         driver.set_page_load_timeout(60)
 
-        # 1. کوکی‌ها
-        try:
-            driver.get("https://www.alibaba.ir")
-            if os.path.exists('cookies.json'):
-                with open('cookies.json', 'r', encoding='utf-8') as f:
-                    cookies = json.load(f)
-                for cookie in cookies:
-                    if 'alibaba' in cookie.get('domain', ''):
-                        try: driver.add_cookie({'name': cookie['name'], 'value': cookie['value'], 'domain': '.alibaba.ir', 'path': '/'})
-                        except: pass
-                driver.refresh()
-        except: pass
-
-        # 2. گرفتن قیمت
-        print(f"✈️ Navigating to Flight Page...")
+        # 1. گرفتن قیمت
         driver.get(target_url)
-        
-        wait = WebDriverWait(driver, 20)
+        wait = WebDriverWait(driver, 25)
         selector = ".pdp-card_sidebar .text-secondary-400"
         
         try:
             price_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
             driver.execute_script("arguments[0].scrollIntoView();", price_element)
-            
             raw_text = price_element.text
             digits = ''.join([c for c in raw_text if c.isdigit()])
-            
-            if digits:
-                return {"price": int(digits)}
-            
-        except TimeoutException:
-            print("⚠️ Timeout: Price element not found within 20s.")
-            return None
-
+            if digits: return {"price": int(digits)}
+        except: return None
     except Exception as e:
         print(f"❌ Scrape Error: {e}")
         return None
     finally:
         if driver: driver.quit()
 
+# --- هسته اصلی و هوشمند شده ---
 if __name__ == "__main__":
-    print("🚀 Starting Bot Loop...")
+    print("🚀 Bot Started (Smart Mode)...")
     
     while True:
-        print("\n" + "="*40)
+        print("\n" + "-"*30)
         
+        # 1. چک کردن انقضا
         if check_if_expired(TARGET_FLIGHT_DEADLINE):
-            print("🛑 Deadline passed. Exiting.")
+            print("🛑 Deadline passed. Bye.")
             break 
-            
-        # محاسبه دقیق زمان شمسی به وقت تهران برای ثبت در شیت
-        now_shamsi_str = get_tehran_time().strftime("%Y/%m/%d - %H:%M:%S")
 
-        data = get_alibaba_price(ALIBABA_URL)
+        # 2. چک کردن آخرین باری که دیتا ثبت شده (مهمترین بخش)
+        print("🔍 Checking last entry in Sheet...")
+        last_run = get_last_run_time_from_sheet()
+        now = get_tehran_time().replace(tzinfo=None) # حذف اطلاعات منطقه زمانی برای مقایسه راحت
         
-        if data:
-            data['check_time'] = now_shamsi_str
-            print(f"✅ Price Found: {data['price']:,} (Time: {now_shamsi_str})")
-            save_to_sheet(data)
-        else:
-            print("❌ No price found.")
+        should_run = True
         
-        print("💤 Sleeping for 1 hour...")
-        time.sleep(3600)
+        if last_run:
+            # محاسبه اختلاف زمانی به ثانیه
+            diff_seconds = (now - last_run).total_seconds()
+            print(f"⏱️ Time since last run: {int(diff_seconds/60)} minutes ({int(diff_seconds)} seconds)")
+            
+            if diff_seconds < 3500: # اگر کمتر از ۵۸ دقیقه (۳۵۰۰ ثانیه) گذشته
+                wait_time = 3660 - diff_seconds # محاسبه کن چقدر مونده تا ۱ ساعت بشه (+ یک دقیقه اضافه)
+                print(f"⛔ Too soon! Waiting for {int(wait_time/60)} minutes to maintain 1-hour interval.")
+                should_run = False
+                time.sleep(wait_time) # بگیر بخواب تا سر ساعت بشه
+            else:
+                print("✅ More than 1 hour passed. Ready to scrape.")
+        
+        # 3. اجرا اگر لازم بود
+        if should_run:
+            now_str = get_tehran_time().strftime("%Y/%m/%d - %H:%M:%S")
+            data = get_alibaba_price(ALIBABA_URL)
+            
+            if data:
+                data['check_time'] = now_str
+                print(f"💰 Price: {data['price']:,}")
+                save_to_sheet(data)
+            else:
+                print("❌ Price not found.")
+            
+            # خواب اجباری بعد از انجام کار
+            print("💤 Job done. Sleeping for 1 hour...")
+            time.sleep(3600)
