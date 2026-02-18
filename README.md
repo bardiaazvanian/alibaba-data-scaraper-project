@@ -45,8 +45,7 @@ As a Solo Builder, I initially proposed an **n8n low-code workflow** for faster 
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/bardiaazvanian/alibaba-flight-tracker.git](https://github.com/bardiaazvanian/alibaba-flight-tracker.git)
-    cd alibaba-flight-tracker
+    git clone https://github.com/bardiaazvanian/alibaba-data-scaraper-project.git
     ```
 
 2.  **Install dependencies:**
